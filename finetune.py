@@ -2,7 +2,7 @@ import pandas as pd
 import torch
 import transformers
 from torch.utils.data import Dataset, DataLoader
-from transformers import BertModel, BertTokenizer, BertConfig, AutoTokenizer, AutoModelForSequenceClassification
+from transformers import BertModel, BertTokenizer, BertConfig, DataCollatorWithPadding
 from accelerate import Accelerator
 from torch import cuda
 
@@ -10,10 +10,10 @@ class Config:
     MAX_LEN = 512
     TRAIN_BATCH_SIZE = 4
     VALID_BATCH_SIZE = 4
-    EPOCHS = 2
+    EPOCHS = 1
     LEARNING_RATE = 1e-5
     BERT_PATH = 'bert-base-cased'
-    FILE_PATH = 'preprocessed_emails_balanced_utf8.csv'
+    FILE_PATH = 'preprocessed_emails_balanced.csv'
     MODEL_FOLDER = "bert_finetuned"
     MODEL_PATH = 'bert_finetuned/pytorch_model.bin'
     VOCAB_PATH = 'bert_finetuned/vocab.txt'
@@ -30,7 +30,7 @@ class EmailDatasetPreprocessor:
         return self.encode_dict[x]
     
     def preprocess(self):
-        df = pd.read_csv(self.file_path)
+        df = pd.read_csv(self.file_path, encoding='utf-8')
         df = df[['Body', 'Label']]
         df['ENCODE_CAT'] = df['Label'].apply(lambda x: self.encode_cat(x))
         return df
@@ -45,6 +45,7 @@ class TriageDataset(Dataset):
     def __getitem__(self, index):
         body = str(self.data.Body[index])
         body = " ".join(body.split())
+        data_collator = DataCollatorWithPadding(tokenizer=self.tokenizer)
         inputs = self.tokenizer.encode_plus(
             body,
             None,
@@ -54,12 +55,15 @@ class TriageDataset(Dataset):
             return_token_type_ids=True,
             truncation=True
         )
+        inputs = data_collator(inputs)
         ids = inputs['input_ids']
         mask = inputs['attention_mask']
-        
+        token_type_ids = inputs["token_type_ids"]
+
         return {
             'ids': torch.tensor(ids, dtype=torch.long),
             'mask': torch.tensor(mask, dtype=torch.long),
+            'token_type_ids': torch.tensor(token_type_ids, dtype=torch.long),
             'targets': torch.tensor(self.data.ENCODE_CAT[index], dtype=torch.long)
         } 
     
@@ -114,11 +118,11 @@ class Trainer:
             nb_tr_steps += 1
             nb_tr_examples += targets.size(0)
             
-            if _ % 5000 == 0:
+            if _ % 500 == 0:
                 loss_step = tr_loss / nb_tr_steps
                 accu_step = (n_correct * 100) / nb_tr_examples 
-                print(f"Training Loss per 5000 steps: {loss_step}")
-                print(f"Training Accuracy per 5000 steps: {accu_step}")
+                print(f"Training Loss per 500 steps: {loss_step}")
+                print(f"Training Accuracy per 500 steps: {accu_step}")
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -129,16 +133,19 @@ class Trainer:
         epoch_accu = (n_correct * 100) / nb_tr_examples
         print(f"Training Loss Epoch: {epoch_loss}")
         print(f"Training Accuracy Epoch: {epoch_accu}")
+        return epoch_loss
 
     def train(self):
+        loss= None
         for epoch in range(Config.EPOCHS):
-            self.train_epoch(epoch)
-        self.save_model()
+            loss = self.train_epoch(epoch)
+        self.save_model(loss)
 
-    def save_model(self):
+    def save_model(self,loss):
         config = BertConfig.from_pretrained(Config.BERT_PATH)
         config.num_labels=4
         config.save_pretrained(Config.MODEL_FOLDER)
+        model.eval()
         torch.save(self.model, Config.MODEL_PATH)
         #self.tokenizer.save_vocabulary(Config.VOCAB_PATH)
         self.tokenizer.save_pretrained(Config.MODEL_FOLDER)
@@ -181,7 +188,7 @@ if __name__ == "__main__":
     train_dataset = df.sample(frac=train_size, random_state=200).reset_index(drop=True)
     test_dataset = df.drop(train_dataset.index).reset_index(drop=True)
     
-    tokenizer = AutoTokenizer.from_pretrained(Config.BERT_PATH)
+    tokenizer = BertTokenizer.from_pretrained(Config.BERT_PATH)
     
     training_set = TriageDataset(train_dataset, tokenizer, Config.MAX_LEN)
     testing_set = TriageDataset(test_dataset, tokenizer, Config.MAX_LEN)
@@ -191,11 +198,13 @@ if __name__ == "__main__":
     
     training_loader = DataLoader(training_set, **train_params)
     testing_loader = DataLoader(testing_set, **test_params)
-    
+
     model = BERTClassifier().to(Config.device)
     
     trainer = Trainer(model, training_loader, testing_loader, tokenizer)
+
     trainer.train()
-    
+
     validator = Validator(model, testing_loader)
     validator.validate()
+

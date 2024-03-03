@@ -22,14 +22,14 @@ df = df[['MessageID', 'From', 'To', 'Subject', 'Body', 'Date', 'Label']]
 df = df.dropna(subset=['Label'])
 
 def preprocess_text(text):
-    # Convert text to lowercase
-    text = text.lower()
     # Remove URLs
     text = re.sub(r'https?://\S+|www\.\S+', '', text)
     # Remove HTML tags
     text = re.sub(r'<.*?>', '', text)
     # Remove numbers
     text = re.sub(r'\d+', '', text)
+    # Remove numbers and special characters, keeping only words
+    text = re.sub(r'[^a-zA-Z\s]', '', text)
     # Remove email addresses
     text = re.sub(r'\S*@\S*\s?', '', text)
     # Remove punctuation
@@ -64,5 +64,5 @@ df_resampled = pd.DataFrame(X_resampled, columns=X.columns)
 df_resampled['Label'] = y_resampled
 
 # Save the cleaned and balanced DataFrame to a new CSV file
-df_resampled.to_csv('preprocessed_emails_balanced.csv', index=False)
+df_resampled.to_csv('preprocessed_emails_balanced.csv', index=False, encoding='utf-8')
 
