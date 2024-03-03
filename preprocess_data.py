@@ -1,68 +1,58 @@
 import pandas as pd
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
 import re
+from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
 from nltk import download
 from imblearn.under_sampling import RandomUnderSampler
-
 import string
 
-# Download necessary NLTK data
-download('punkt')
-download('stopwords')
-download('wordnet')
+class EmailPreprocessor:
+    def __init__(self):
 
-# Read the CSV file
-df = pd.read_csv('labeled_emails.csv')
+        self.lemmatizer = WordNetLemmatizer()
+    
+    def preprocess_text(self, text):
+        # Method to clean and preprocess a single piece of text
+        text = re.sub(r'https?://\S+|www\.\S+', '', text)
+        text = re.sub(r'<.*?>', '', text)
+        text = re.sub(r'\d+', '', text)
+        text = re.sub(r'[^a-zA-Z\s]', '', text)
+        text = re.sub(r'\S*@\S*\s?', '', text)
+        text = re.sub(f"[{string.punctuation}]", "", text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        tokens = word_tokenize(text)
+        tokens = [self.lemmatizer.lemmatize(word) for word in tokens]
+        return ' '.join(tokens)
+    
+    def preprocess_dataframe(self, df, subject_col='Subject', body_col='Body'):
+        if subject_col in df:
+            df[subject_col] = df[subject_col].apply(lambda x: self.preprocess_text(x) if isinstance(x, str) else x)
+        if body_col in df:
+            df[body_col] = df[body_col].apply(lambda x: self.preprocess_text(x) if isinstance(x, str) else x)
+        return df
+    
+    def balance_dataset(self, df, label_col='Label'):
+        # Method to balance the dataset
+        ros = RandomUnderSampler(random_state=42)
+        X = df.drop(label_col, axis=1)  # Features
+        y = df[label_col]  # Target
+        X_resampled, y_resampled = ros.fit_resample(X, y)
+        df_resampled = pd.DataFrame(X_resampled, columns=X.columns)
+        df_resampled[label_col] = y_resampled
+        return df_resampled
+    
+    def process_csv(self, csv_path, output_csv_path, subject_col='Subject', body_col='Body', label_col='Label'):
+        # Method to read a CSV, process, and save the output
+        df = pd.read_csv(csv_path)
+        df = self.preprocess_dataframe(df, subject_col, body_col, label_col)
+        df_balanced = self.balance_dataset(df, label_col)
+        df_balanced.to_csv(output_csv_path, index=False, encoding='utf-8')
 
-# Selecting the relevant columns
-df = df[['MessageID', 'From', 'To', 'Subject', 'Body', 'Date', 'Label']]
+if __name__ == "__main__":
+    # Ensure necessary NLTK data is downloaded
+    #download('punkt')
+    #download('stopwords')
+    #download('wordnet')
 
-df = df.dropna(subset=['Label'])
-
-def preprocess_text(text):
-    # Remove URLs
-    text = re.sub(r'https?://\S+|www\.\S+', '', text)
-    # Remove HTML tags
-    text = re.sub(r'<.*?>', '', text)
-    # Remove numbers
-    text = re.sub(r'\d+', '', text)
-    # Remove numbers and special characters, keeping only words
-    text = re.sub(r'[^a-zA-Z\s]', '', text)
-    # Remove email addresses
-    text = re.sub(r'\S*@\S*\s?', '', text)
-    # Remove punctuation
-    text = re.sub(f"[{string.punctuation}]", "", text)
-    # Remove extra spaces
-    text = re.sub(r'\s+', ' ', text).strip()
-    # Tokenize text
-    tokens = word_tokenize(text)
-    # Lemmatization
-    lemmatizer = WordNetLemmatizer()    
-    tokens = [lemmatizer.lemmatize(word) for word in tokens]
-    # Join the words back into one string
-    text = ' '.join(tokens)
-    return text
-
-# Apply the preprocessing function to the 'Subject' and 'Body' columns
-df['Subject'] = df['Subject'].apply(lambda x: preprocess_text(x) if isinstance(x, str) else x)
-df['Body'] = df['Body'].apply(lambda x: preprocess_text(x) if isinstance(x, str) else x)
-
-# Oversampling to balance the dataset
-ros = RandomUnderSampler(random_state=42)
-# Assuming 'Label' is your target and other columns are features, adjust as necessary
-X = df.drop('Label', axis=1)  # Features
-y = df['Label']  # Target
-
-# The fit_resample function requires numerical input, thus ensure your features are appropriately encoded if necessary
-X_resampled, y_resampled = ros.fit_resample(X, y)
-
-# Combine the resampled features and labels back into a DataFrame
-# Note: You might need to adjust this if your features were encoded or transformed during oversampling
-df_resampled = pd.DataFrame(X_resampled, columns=X.columns)
-df_resampled['Label'] = y_resampled
-
-# Save the cleaned and balanced DataFrame to a new CSV file
-df_resampled.to_csv('preprocessed_emails_balanced.csv', index=False, encoding='utf-8')
-
+    preprocessor = EmailPreprocessor()
+    preprocessor.process_csv('labeled_emails.csv', 'preprocessed_emails_balanced.csv')
