@@ -17,7 +17,7 @@ tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased-finetun
 file_path ='preprocessed_emails.csv'
 
 df = pd.read_csv(file_path)
-df = df[['Subject', 'Body', 'Label']]
+df = df[['Body', 'Label']]
 
 encode_dict = {}
 
@@ -38,10 +38,10 @@ class Triage(Dataset):
         self.max_len = max_len
         
     def __getitem__(self, index):
-        title = str(self.data.TITLE[index])
-        title = " ".join(title.split())
+        body = str(self.data.Body[index])
+        body = " ".join(body.split())
         inputs = self.tokenizer.encode_plus(
-            title,
+            body,
             None,
             add_special_tokens=True,
             max_length=self.max_len,
@@ -115,7 +115,10 @@ def calcuate_accu(big_idx, targets):
     n_correct = (big_idx==targets).sum().item()
     return n_correct
 
+
+
 def train(epoch):
+    
     tr_loss = 0
     n_correct = 0
     nb_tr_steps = 0
@@ -157,9 +160,19 @@ def train(epoch):
 for epoch in range(EPOCHS):
     train(epoch)
 
+output_model_file = 'models/pytorch_distilbert_news.bin'
+output_vocab_file = 'models/vocab_distilbert_news.bin'
+
+model_to_save = model
+torch.save(model_to_save, output_model_file)
+tokenizer.save_vocabulary(output_vocab_file)
+
+print('All files saved')
+print('This tutorial is completed')
+
 def valid(model, testing_loader):
     model.eval()
-    n_correct = 0; n_wrong = 0; total = 0
+    n_correct = 0; n_wrong = 0; total = 0; tr_loss = 0
     with torch.no_grad():
         for _, data in enumerate(testing_loader, 0):
             ids = data['ids'].to(device, dtype = torch.long)
@@ -191,13 +204,3 @@ print('Here we are leveraging on the dataloader crearted for the validation data
 
 acc = valid(model, testing_loader)
 print("Accuracy on test data = %0.2f%%" % acc)
-
-output_model_file = './models/pytorch_distilbert_news.bin'
-output_vocab_file = './models/vocab_distilbert_news.bin'
-
-model_to_save = model
-torch.save(model_to_save, output_model_file)
-tokenizer.save_vocabulary(output_vocab_file)
-
-print('All files saved')
-print('This tutorial is completed')
