@@ -2,7 +2,7 @@ import pandas as pd
 import torch
 import transformers
 from torch.utils.data import Dataset, DataLoader
-from transformers import BertModel, BertTokenizer, BertConfig, DataCollatorWithPadding
+from transformers import BertModel, BertTokenizer, BertConfig, DataCollatorWithPadding, AutoModelForSequenceClassification
 from accelerate import Accelerator
 from torch import cuda
 
@@ -10,10 +10,10 @@ class Config:
     MAX_LEN = 512
     TRAIN_BATCH_SIZE = 4
     VALID_BATCH_SIZE = 4
-    EPOCHS = 1
+    EPOCHS = 5
     LEARNING_RATE = 1e-5
     BERT_PATH = 'bert-base-cased'
-    FILE_PATH = 'preprocessed_emails_balanced.csv'
+    FILE_PATH = 'preprocessed_emails_underSampled.csv'
     MODEL_FOLDER = "bert_finetuned"
     MODEL_PATH = 'bert_finetuned/pytorch_model.bin'
     VOCAB_PATH = 'bert_finetuned/vocab.txt'
@@ -78,8 +78,8 @@ class BERTClassifier(torch.nn.Module):
         self.dropout = torch.nn.Dropout(0.3)
         self.classifier = torch.nn.Linear(768, 4)
 
-    def forward(self, input_ids, attention_mask):
-        output_1 = self.l1(input_ids=input_ids, attention_mask=attention_mask)
+    def forward(self, input_ids, attention_mask, token_type_ids):
+        output_1 = self.l1(input_ids=input_ids, attention_mask=attention_mask, token_type_ids = token_type_ids, return_dict=False)
         hidden_state = output_1[0]
         pooler = hidden_state[:, 0]
         pooler = self.pre_classifier(pooler)
@@ -107,9 +107,10 @@ class Trainer:
         for _, data in enumerate(self.training_loader, 0):
             ids = data['ids'].to(Config.device, dtype=torch.long)
             mask = data['mask'].to(Config.device, dtype=torch.long)
+            token_type_ids = data['token_type_ids'].to(Config.device, dtype=torch.long)
             targets = data['targets'].to(Config.device, dtype=torch.long)
 
-            outputs = self.model(ids, mask)
+            outputs = self.model(ids, mask, token_type_ids)
             loss = self.loss_function(outputs, targets)
             tr_loss += loss.item()
             big_val, big_idx = torch.max(outputs.data, dim=1)
@@ -133,20 +134,25 @@ class Trainer:
         epoch_accu = (n_correct * 100) / nb_tr_examples
         print(f"Training Loss Epoch: {epoch_loss}")
         print(f"Training Accuracy Epoch: {epoch_accu}")
-        return epoch_loss
 
     def train(self):
         loss= None
         for epoch in range(Config.EPOCHS):
-            loss = self.train_epoch(epoch)
-        self.save_model(loss)
+            self.train_epoch(epoch)
+        self.save_model()
 
-    def save_model(self,loss):
+    def save_model(self):
         config = BertConfig.from_pretrained(Config.BERT_PATH)
         config.num_labels=4
+        config.architectures = "BertForForSequenceClassification"
+        config.label2id = {'Rejected': 0, 'Applied': 1, 'Irrelevant': 2, 'Accepted': 3}
+        config.id2label = {0 :'Rejected', 1 :'Applied', 2 :'Irrelevant', 3: 'Accepted'}
         config.save_pretrained(Config.MODEL_FOLDER)
         model.eval()
-        torch.save(self.model, Config.MODEL_PATH)
+        torch.save({
+        'model_state_dict': self.model.state_dict(),
+        'optimizer_state_dict': self.optimizer.state_dict()
+        }, Config.MODEL_PATH, _use_new_zipfile_serialization=False)
         #self.tokenizer.save_vocabulary(Config.VOCAB_PATH)
         self.tokenizer.save_pretrained(Config.MODEL_FOLDER)
         print('Model and tokenizer have been saved.')
@@ -164,8 +170,9 @@ class Validator:
             for _, data in enumerate(self.testing_loader, 0):
                 ids = data['ids'].to(Config.device, dtype=torch.long)
                 mask = data['mask'].to(Config.device, dtype=torch.long)
+                token_type_ids = data['token_type_ids'].to(Config.device, dtype=torch.long)
                 targets = data['targets'].to(Config.device, dtype=torch.long)
-                outputs = self.model(ids, mask).squeeze()
+                outputs = self.model(ids, mask, token_type_ids).squeeze()
                 loss = self.loss_function(outputs, targets)
                 tr_loss += loss.item()
                 big_val, big_idx = torch.max(outputs.data, dim=1)
@@ -184,7 +191,7 @@ if __name__ == "__main__":
     preprocessor = EmailDatasetPreprocessor(Config.FILE_PATH)
     df = preprocessor.preprocess()
     
-    train_size = 0.8
+    train_size = 0.95
     train_dataset = df.sample(frac=train_size, random_state=200).reset_index(drop=True)
     test_dataset = df.drop(train_dataset.index).reset_index(drop=True)
     

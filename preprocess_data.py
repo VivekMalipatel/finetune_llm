@@ -4,7 +4,7 @@ from nltk.tokenize import word_tokenize
 import re
 from nltk.stem import WordNetLemmatizer
 from nltk import download
-from imblearn.over_sampling import RandomOverSampler
+from imblearn.under_sampling import RandomUnderSampler
 
 import string
 
@@ -50,7 +50,7 @@ df['Subject'] = df['Subject'].apply(lambda x: preprocess_text(x) if isinstance(x
 df['Body'] = df['Body'].apply(lambda x: preprocess_text(x) if isinstance(x, str) else x)
 
 # Oversampling to balance the dataset
-ros = RandomOverSampler(random_state=42)
+ros = RandomUnderSampler(random_state=42)
 # Assuming 'Label' is your target and other columns are features, adjust as necessary
 X = df.drop('Label', axis=1)  # Features
 y = df['Label']  # Target
