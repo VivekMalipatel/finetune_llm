@@ -12,7 +12,7 @@ TRAIN_BATCH_SIZE = 4
 VALID_BATCH_SIZE = 2
 EPOCHS = 1
 LEARNING_RATE = 1e-05
-tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-cased')
+tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased-finetuned-sst-2-english')
 
 file_path ='preprocessed_emails.csv'
 
@@ -73,3 +73,17 @@ print("TEST Dataset: {}".format(test_dataset.shape))
 
 training_set = Triage(train_dataset, tokenizer, MAX_LEN)
 testing_set = Triage(test_dataset, tokenizer, MAX_LEN)
+
+train_params = {'batch_size': TRAIN_BATCH_SIZE,
+                'shuffle': True,
+                'num_workers': 0
+                }
+
+test_params = {'batch_size': VALID_BATCH_SIZE,
+                'shuffle': True,
+                'num_workers': 0
+                }
+
+training_loader = DataLoader(training_set, **train_params)
+testing_loader = DataLoader(testing_set, **test_params)
+
