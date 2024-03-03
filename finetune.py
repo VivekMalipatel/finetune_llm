@@ -2,35 +2,39 @@ import pandas as pd
 import torch
 import transformers
 from torch.utils.data import Dataset, DataLoader
-from transformers import DistilBertModel, DistilBertTokenizer
-
+from transformers import BertModel, BertTokenizer
+from accelerate import Accelerator
 from torch import cuda
-device = 'cuda:5' if cuda.is_available() else 'cpu'
 
-MAX_LEN = 512
-TRAIN_BATCH_SIZE = 4
-VALID_BATCH_SIZE = 2
-EPOCHS = 1
-LEARNING_RATE = 1e-05
-tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased-finetuned-sst-2-english')
+class Config:
+    MAX_LEN = 512
+    TRAIN_BATCH_SIZE = 4
+    VALID_BATCH_SIZE = 4
+    EPOCHS = 1
+    LEARNING_RATE = 1e-05
+    BERT_PATH = 'bert-base-cased'
+    FILE_PATH = 'preprocessed_emails_balanced.csv'
+    MODEL_PATH = 'models/pytorch_bert_applicationTracker.bin'
+    VOCAB_PATH = 'models/vocab_bert_applicationTracker.txt'
+    device = 'cuda' if cuda.is_available() else 'cpu'
 
-file_path ='preprocessed_emails.csv'
+class EmailDatasetPreprocessor:
+    def __init__(self, file_path):
+        self.file_path = file_path
+        self.encode_dict = {'Rejected': 0, 'Applied': 1, 'Irrelevant': 2, 'Accepted': 3}
+        
+    def encode_cat(self, x):
+        if x not in self.encode_dict.keys():
+            self.encode_dict[x] = len(self.encode_dict)
+        return self.encode_dict[x]
+    
+    def preprocess(self):
+        df = pd.read_csv(self.file_path)
+        df = df[['Body', 'Label']]
+        df['ENCODE_CAT'] = df['Label'].apply(lambda x: self.encode_cat(x))
+        return df
 
-df = pd.read_csv(file_path)
-df = df[['Body', 'Label']]
-
-encode_dict = {}
-
-def encode_cat(x):
-    if x not in encode_dict.keys():
-        encode_dict[x]=len(encode_dict)
-    return encode_dict[x]
-
-df['ENCODE_CAT'] = df['Label'].apply(lambda x: encode_cat(x))
-
-print(df['ENCODE_CAT'])
-
-class Triage(Dataset):
+class TriageDataset(Dataset):
     def __init__(self, dataframe, tokenizer, max_len):
         self.len = len(dataframe)
         self.data = dataframe
@@ -51,7 +55,7 @@ class Triage(Dataset):
         )
         ids = inputs['input_ids']
         mask = inputs['attention_mask']
-
+        
         return {
             'ids': torch.tensor(ids, dtype=torch.long),
             'mask': torch.tensor(mask, dtype=torch.long),
@@ -61,36 +65,10 @@ class Triage(Dataset):
     def __len__(self):
         return self.len
 
-train_size = 0.8
-train_dataset=df.sample(frac=train_size,random_state=200)
-test_dataset=df.drop(train_dataset.index).reset_index(drop=True)
-train_dataset = train_dataset.reset_index(drop=True)
-
-
-print("FULL Dataset: {}".format(df.shape))
-print("TRAIN Dataset: {}".format(train_dataset.shape))
-print("TEST Dataset: {}".format(test_dataset.shape))
-
-training_set = Triage(train_dataset, tokenizer, MAX_LEN)
-testing_set = Triage(test_dataset, tokenizer, MAX_LEN)
-
-train_params = {'batch_size': TRAIN_BATCH_SIZE,
-                'shuffle': True,
-                'num_workers': 0
-                }
-
-test_params = {'batch_size': VALID_BATCH_SIZE,
-                'shuffle': True,
-                'num_workers': 0
-                }
-
-training_loader = DataLoader(training_set, **train_params)
-testing_loader = DataLoader(testing_set, **test_params)
-
-class DistillBERTClass(torch.nn.Module):
+class BERTClassifier(torch.nn.Module):
     def __init__(self):
-        super(DistillBERTClass, self).__init__()
-        self.l1 = DistilBertModel.from_pretrained("distilbert-base-uncased-finetuned-sst-2-english")
+        super(BERTClassifier, self).__init__()
+        self.l1 = BertModel.from_pretrained(Config.BERT_PATH)
         self.pre_classifier = torch.nn.Linear(768, 768)
         self.dropout = torch.nn.Dropout(0.3)
         self.classifier = torch.nn.Linear(768, 4)
@@ -104,103 +82,120 @@ class DistillBERTClass(torch.nn.Module):
         pooler = self.dropout(pooler)
         output = self.classifier(pooler)
         return output
-    
-model = DistillBERTClass()
-model.to(device)
 
-loss_function = torch.nn.CrossEntropyLoss()
-optimizer = torch.optim.Adam(params =  model.parameters(), lr=LEARNING_RATE)
-
-def calcuate_accu(big_idx, targets):
-    n_correct = (big_idx==targets).sum().item()
-    return n_correct
-
-
-
-def train(epoch):
-    
-    tr_loss = 0
-    n_correct = 0
-    nb_tr_steps = 0
-    nb_tr_examples = 0
-    model.train()
-    for _,data in enumerate(training_loader, 0):
-        ids = data['ids'].to(device, dtype = torch.long)
-        mask = data['mask'].to(device, dtype = torch.long)
-        targets = data['targets'].to(device, dtype = torch.long)
-
-        outputs = model(ids, mask)
-        loss = loss_function(outputs, targets)
-        tr_loss += loss.item()
-        big_val, big_idx = torch.max(outputs.data, dim=1)
-        n_correct += calcuate_accu(big_idx, targets)
-
-        nb_tr_steps += 1
-        nb_tr_examples+=targets.size(0)
+class Trainer:
+    def __init__(self, model, training_loader, testing_loader, tokenizer):
+        self.model = model
+        self.training_loader = training_loader
+        self.testing_loader = testing_loader
+        self.optimizer = torch.optim.Adam(params=model.parameters(), lr=Config.LEARNING_RATE)
+        self.loss_function = torch.nn.CrossEntropyLoss()
+        self.accelerator = Accelerator()
+        self.tokenizer = tokenizer
         
-        if _%5000==0:
-            loss_step = tr_loss/nb_tr_steps
-            accu_step = (n_correct*100)/nb_tr_examples 
-            print(f"Training Loss per 5000 steps: {loss_step}")
-            print(f"Training Accuracy per 5000 steps: {accu_step}")
+        self.model, self.optimizer, self.training_loader, self.testing_loader = self.accelerator.prepare(
+            self.model, self.optimizer, self.training_loader, self.testing_loader
+        )
 
-        optimizer.zero_grad()
-        loss.backward()
-        # # When using GPU
-        optimizer.step()
+    def calcuate_accu(self, big_idx, targets):
+        n_correct = (big_idx == targets).sum().item()
+        return n_correct
 
-    print(f'The Total Accuracy for Epoch {epoch}: {(n_correct*100)/nb_tr_examples}')
-    epoch_loss = tr_loss/nb_tr_steps
-    epoch_accu = (n_correct*100)/nb_tr_examples
-    print(f"Training Loss Epoch: {epoch_loss}")
-    print(f"Training Accuracy Epoch: {epoch_accu}")
+    def train_epoch(self, epoch):
+        tr_loss, n_correct, nb_tr_steps, nb_tr_examples = 0, 0, 0, 0
+        self.model.train()
+        for _, data in enumerate(self.training_loader, 0):
+            ids = data['ids'].to(self.accelerator.device, dtype=torch.long)
+            mask = data['mask'].to(self.accelerator.device, dtype=torch.long)
+            targets = data['targets'].to(self.accelerator.device, dtype=torch.long)
 
-    return 
-
-for epoch in range(EPOCHS):
-    train(epoch)
-
-output_model_file = 'models/pytorch_distilbert_news.bin'
-output_vocab_file = 'models/vocab_distilbert_news.bin'
-
-model_to_save = model
-torch.save(model_to_save, output_model_file)
-tokenizer.save_vocabulary(output_vocab_file)
-
-print('All files saved')
-print('This tutorial is completed')
-
-def valid(model, testing_loader):
-    model.eval()
-    n_correct = 0; n_wrong = 0; total = 0; tr_loss = 0
-    with torch.no_grad():
-        for _, data in enumerate(testing_loader, 0):
-            ids = data['ids'].to(device, dtype = torch.long)
-            mask = data['mask'].to(device, dtype = torch.long)
-            targets = data['targets'].to(device, dtype = torch.long)
-            outputs = model(ids, mask).squeeze()
-            loss = loss_function(outputs, targets)
+            outputs = self.model(ids, mask)
+            loss = self.loss_function(outputs, targets)
             tr_loss += loss.item()
             big_val, big_idx = torch.max(outputs.data, dim=1)
-            n_correct += calcuate_accu(big_idx, targets)
+            n_correct += self.calcuate_accu(big_idx, targets)
 
             nb_tr_steps += 1
-            nb_tr_examples+=targets.size(0)
+            nb_tr_examples += targets.size(0)
             
-            if _%5000==0:
-                loss_step = tr_loss/nb_tr_steps
-                accu_step = (n_correct*100)/nb_tr_examples
-                print(f"Validation Loss per 100 steps: {loss_step}")
-                print(f"Validation Accuracy per 100 steps: {accu_step}")
-    epoch_loss = tr_loss/nb_tr_steps
-    epoch_accu = (n_correct*100)/nb_tr_examples
-    print(f"Validation Loss Epoch: {epoch_loss}")
-    print(f"Validation Accuracy Epoch: {epoch_accu}")
+            if _ % 5000 == 0:
+                loss_step = tr_loss / nb_tr_steps
+                accu_step = (n_correct * 100) / nb_tr_examples 
+                print(f"Training Loss per 5000 steps: {loss_step}")
+                print(f"Training Accuracy per 5000 steps: {accu_step}")
+
+            self.optimizer.zero_grad()
+            self.accelerator.backward(loss)
+            self.optimizer.step()
+
+        print(f'The Total Accuracy for Epoch {epoch}: {(n_correct * 100) / nb_tr_examples}')
+        epoch_loss = tr_loss / nb_tr_steps
+        epoch_accu = (n_correct * 100) / nb_tr_examples
+        print(f"Training Loss Epoch: {epoch_loss}")
+        print(f"Training Accuracy Epoch: {epoch_accu}")
+
+    def train(self):
+        for epoch in range(Config.EPOCHS):
+            self.train_epoch(epoch)
+        self.save_model()
+
+    def save_model(self):
+        torch.save(self.model, Config.MODEL_PATH)
+        self.tokenizer.save_vocabulary(Config.VOCAB_PATH)
+        print('Model and tokenizer have been saved.')
+
+class Validator:
+    def __init__(self, model, testing_loader):
+        self.model = model
+        self.testing_loader = testing_loader
+        self.loss_function = torch.nn.CrossEntropyLoss()
     
-    return epoch_accu
+    def validate(self):
+        self.model.eval()
+        tr_loss, n_correct, nb_tr_steps, nb_tr_examples = 0, 0, 0, 0
+        with torch.no_grad():
+            for _, data in enumerate(self.testing_loader, 0):
+                ids = data['ids'].to(Config.device, dtype=torch.long)
+                mask = data['mask'].to(Config.device, dtype=torch.long)
+                targets = data['targets'].to(Config.device, dtype=torch.long)
+                outputs = self.model(ids, mask).squeeze()
+                loss = self.loss_function(outputs, targets)
+                tr_loss += loss.item()
+                big_val, big_idx = torch.max(outputs.data, dim=1)
+                n_correct += (big_idx == targets).sum().item()
 
-print('This is the validation section to print the accuracy and see how it performs')
-print('Here we are leveraging on the dataloader crearted for the validation dataset, the approcah is using more of pytorch')
+                nb_tr_steps += 1
+                nb_tr_examples += targets.size(0)
 
-acc = valid(model, testing_loader)
-print("Accuracy on test data = %0.2f%%" % acc)
+        epoch_loss = tr_loss / nb_tr_steps
+        epoch_accu = (n_correct * 100) / nb_tr_examples
+        print(f"Validation Loss: {epoch_loss}")
+        print(f"Validation Accuracy: {epoch_accu}%")
+        return epoch_accu
+
+if __name__ == "__main__":
+    preprocessor = EmailDatasetPreprocessor(Config.FILE_PATH)
+    df = preprocessor.preprocess()
+    
+    train_size = 0.8
+    train_dataset = df.sample(frac=train_size, random_state=200).reset_index(drop=True)
+    test_dataset = df.drop(train_dataset.index).reset_index(drop=True)
+    
+    tokenizer = BertTokenizer.from_pretrained(Config.BERT_PATH)
+    
+    training_set = TriageDataset(train_dataset, tokenizer, Config.MAX_LEN)
+    testing_set = TriageDataset(test_dataset, tokenizer, Config.MAX_LEN)
+    
+    train_params = {'batch_size': Config.TRAIN_BATCH_SIZE, 'shuffle': True, 'num_workers': 0}
+    test_params = {'batch_size': Config.VALID_BATCH_SIZE, 'shuffle': True, 'num_workers': 0}
+    
+    training_loader = DataLoader(training_set, **train_params)
+    testing_loader = DataLoader(testing_set, **test_params)
+    
+    model = BERTClassifier().to(Config.device)
+    
+    trainer = Trainer(model, training_loader, testing_loader, tokenizer)
+    trainer.train()
+    
+    validator = Validator(model, testing_loader)
+    validator.validate()
