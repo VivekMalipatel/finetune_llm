@@ -2,7 +2,7 @@ import pandas as pd
 import torch
 import transformers
 from torch.utils.data import Dataset, DataLoader
-from transformers import BertModel, BertTokenizer
+from transformers import BertModel, BertTokenizer, BertConfig, AutoTokenizer, AutoModelForSequenceClassification
 from accelerate import Accelerator
 from torch import cuda
 
@@ -10,13 +10,14 @@ class Config:
     MAX_LEN = 512
     TRAIN_BATCH_SIZE = 4
     VALID_BATCH_SIZE = 4
-    EPOCHS = 1
-    LEARNING_RATE = 1e-05
+    EPOCHS = 2
+    LEARNING_RATE = 1e-5
     BERT_PATH = 'bert-base-cased'
-    FILE_PATH = 'preprocessed_emails_balanced.csv'
-    MODEL_PATH = 'models/pytorch_bert_applicationTracker.bin'
-    VOCAB_PATH = 'models/vocab_bert_applicationTracker.txt'
-    device = 'cuda' if cuda.is_available() else 'cpu'
+    FILE_PATH = 'preprocessed_emails_balanced_utf8.csv'
+    MODEL_FOLDER = "bert_finetuned"
+    MODEL_PATH = 'bert_finetuned/pytorch_model.bin'
+    VOCAB_PATH = 'bert_finetuned/vocab.txt'
+    device = 'cuda:5' if cuda.is_available() else 'cpu'
 
 class EmailDatasetPreprocessor:
     def __init__(self, file_path):
@@ -90,12 +91,7 @@ class Trainer:
         self.testing_loader = testing_loader
         self.optimizer = torch.optim.Adam(params=model.parameters(), lr=Config.LEARNING_RATE)
         self.loss_function = torch.nn.CrossEntropyLoss()
-        self.accelerator = Accelerator()
         self.tokenizer = tokenizer
-        
-        self.model, self.optimizer, self.training_loader, self.testing_loader = self.accelerator.prepare(
-            self.model, self.optimizer, self.training_loader, self.testing_loader
-        )
 
     def calcuate_accu(self, big_idx, targets):
         n_correct = (big_idx == targets).sum().item()
@@ -105,9 +101,9 @@ class Trainer:
         tr_loss, n_correct, nb_tr_steps, nb_tr_examples = 0, 0, 0, 0
         self.model.train()
         for _, data in enumerate(self.training_loader, 0):
-            ids = data['ids'].to(self.accelerator.device, dtype=torch.long)
-            mask = data['mask'].to(self.accelerator.device, dtype=torch.long)
-            targets = data['targets'].to(self.accelerator.device, dtype=torch.long)
+            ids = data['ids'].to(Config.device, dtype=torch.long)
+            mask = data['mask'].to(Config.device, dtype=torch.long)
+            targets = data['targets'].to(Config.device, dtype=torch.long)
 
             outputs = self.model(ids, mask)
             loss = self.loss_function(outputs, targets)
@@ -125,7 +121,7 @@ class Trainer:
                 print(f"Training Accuracy per 5000 steps: {accu_step}")
 
             self.optimizer.zero_grad()
-            self.accelerator.backward(loss)
+            loss.backward()
             self.optimizer.step()
 
         print(f'The Total Accuracy for Epoch {epoch}: {(n_correct * 100) / nb_tr_examples}')
@@ -140,8 +136,12 @@ class Trainer:
         self.save_model()
 
     def save_model(self):
+        config = BertConfig.from_pretrained(Config.BERT_PATH)
+        config.num_labels=4
+        config.save_pretrained(Config.MODEL_FOLDER)
         torch.save(self.model, Config.MODEL_PATH)
-        self.tokenizer.save_vocabulary(Config.VOCAB_PATH)
+        #self.tokenizer.save_vocabulary(Config.VOCAB_PATH)
+        self.tokenizer.save_pretrained(Config.MODEL_FOLDER)
         print('Model and tokenizer have been saved.')
 
 class Validator:
@@ -181,7 +181,7 @@ if __name__ == "__main__":
     train_dataset = df.sample(frac=train_size, random_state=200).reset_index(drop=True)
     test_dataset = df.drop(train_dataset.index).reset_index(drop=True)
     
-    tokenizer = BertTokenizer.from_pretrained(Config.BERT_PATH)
+    tokenizer = AutoTokenizer.from_pretrained(Config.BERT_PATH)
     
     training_set = TriageDataset(train_dataset, tokenizer, Config.MAX_LEN)
     testing_set = TriageDataset(test_dataset, tokenizer, Config.MAX_LEN)
