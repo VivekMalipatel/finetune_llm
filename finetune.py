@@ -12,13 +12,13 @@ class Config:
     MAX_LEN = 512
     TRAIN_BATCH_SIZE = 4
     VALID_BATCH_SIZE = 4
-    EPOCHS = 10
+    EPOCHS = 1
     LEARNING_RATE = 1e-5
-    BERT_PATH = 'bert-large-cased'
-    FILE_PATH = 'preprocessed_emails_underSampled.csv'
+    BERT_PATH = 'bert-base-cased'
+    FILE_PATH = 'preprocessed_emails_overSampled.csv'
     MODEL_FOLDER = "bert_large_finetuned"
-    MODEL_PATH = 'bert_large_finetuned/pytorch_model.bin'
-    VOCAB_PATH = 'bert_large_finetuned/vocab.txt'
+    MODEL_PATH = 'bert_finetuned/pytorch_model.bin'
+    VOCAB_PATH = 'bert_finetuned/vocab.txt'
     device = 'cuda:5' if cuda.is_available() else 'cpu'
 
 class EmailDatasetPreprocessor:
@@ -76,9 +76,9 @@ class BERTClassifier(torch.nn.Module):
     def __init__(self):
         super(BERTClassifier, self).__init__()
         self.l1 = BertModel.from_pretrained(Config.BERT_PATH)
-        self.pre_classifier = torch.nn.Linear(1024, 1024)
-        self.dropout = torch.nn.Dropout(0.1)
-        self.classifier = torch.nn.Linear(1024, 4)
+        self.pre_classifier = torch.nn.Linear(768, 768)
+        self.dropout = torch.nn.Dropout(0.3)
+        self.classifier = torch.nn.Linear(768, 4)
 
     def forward(self, input_ids, attention_mask, token_type_ids):
         output_1 = self.l1(input_ids=input_ids, attention_mask=attention_mask, token_type_ids = token_type_ids, return_dict=False)
@@ -121,13 +121,14 @@ class Trainer:
             nb_tr_steps += 1
             nb_tr_examples += targets.size(0)
             
-            '''
+
             if _ % 500 == 0:
                 loss_step = tr_loss / nb_tr_steps
                 accu_step = (n_correct * 100) / nb_tr_examples 
                 print(f"Training Loss per 500 steps: {loss_step}")
                 print(f"Training Accuracy per 500 steps: {accu_step}")
-            '''
+                print()
+            
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -138,6 +139,7 @@ class Trainer:
         epoch_accu = (n_correct * 100) / nb_tr_examples
         print(f"Training Loss Epoch: {epoch_loss}")
         print(f"Training Accuracy Epoch: {epoch_accu}")
+        print()
 
     def train(self):
         loss= None

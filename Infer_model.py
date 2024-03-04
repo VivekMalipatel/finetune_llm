@@ -10,13 +10,13 @@ warnings.filterwarnings("ignore")
 
 logging.set_verbosity_error()
 
-Config.BERT_PATH = 'bert_finetuned'
+Config.BERT_PATH = 'distilBert_finetuned'
 
 tokenizer = BertTokenizer.from_pretrained(Config.BERT_PATH)
 
 id2label = {0 :'Rejected', 1 :'Applied', 2 :'Irrelevant', 3: 'Accepted'}
 
-data = {"Body": ["Thank you for your interest in CrowdStrike. Unfortunately, at this time we were unable to review your background and qualifications against our job requisition R15879 - Machine Learning Software and Data Engineering Internship - Summer 2024 (Remote) due to filling the position with another candidate. We appreciate your interest in working with us and encourage you to revisit our career portal to learn about future opportunities."], "ENCODE_CAT": [1]}
+data = {"Body": ["Hi all, Assignment 2 is out. The deadline is March 23rd. Good luck!TAs"], "ENCODE_CAT": [1]}
 df = pd.DataFrame(data)
 preprocess = EmailPreprocessor()
 df = preprocess.preprocess_dataframe(df)

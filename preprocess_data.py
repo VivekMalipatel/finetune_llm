@@ -4,7 +4,12 @@ from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
 from nltk import download
 from imblearn.under_sampling import RandomUnderSampler
+from imblearn.over_sampling import RandomOverSampler
 import string
+
+class Config:
+    input_csv_path = "labeled_emails.csv"
+    target_csv_path = "preprocessed_emails_underSampled.csv"
 
 class EmailPreprocessor:
     def __init__(self):
@@ -31,7 +36,7 @@ class EmailPreprocessor:
             df[body_col] = df[body_col].apply(lambda x: self.preprocess_text(x) if isinstance(x, str) else x)
         return df
     
-    def balance_dataset(self, df, label_col='Label'):
+    def underSample(self, df, label_col='Label'):
         # Method to balance the dataset
         ros = RandomUnderSampler(random_state=42)
         X = df.drop(label_col, axis=1)  # Features
@@ -40,13 +45,23 @@ class EmailPreprocessor:
         df_resampled = pd.DataFrame(X_resampled, columns=X.columns)
         df_resampled[label_col] = y_resampled
         return df_resampled
+
+    def overSample(self, df, label_col='Label'):
+        # Method to balance the dataset
+        ros = RandomOverSampler(random_state=42)
+        X = df.drop(label_col, axis=1)  # Features
+        y = df[label_col]  # Target
+        X_resampled, y_resampled = ros.fit_resample(X, y)
+        df_resampled = pd.DataFrame(X_resampled, columns=X.columns)
+        df_resampled[label_col] = y_resampled
+        return df_resampled
     
-    def process_csv(self, csv_path, output_csv_path, subject_col='Subject', body_col='Body', label_col='Label'):
-        # Method to read a CSV, process, and save the output
+    def read_csv(self, csv_path):
         df = pd.read_csv(csv_path)
-        df = self.preprocess_dataframe(df, subject_col, body_col, label_col)
-        df_balanced = self.balance_dataset(df, label_col)
-        df_balanced.to_csv(output_csv_path, index=False, encoding='utf-8')
+        return df
+    
+    def save_csv(self, df, output_csv_path):
+        df.to_csv(output_csv_path, index=False, encoding='utf-8')
 
 if __name__ == "__main__":
     # Ensure necessary NLTK data is downloaded
@@ -55,4 +70,7 @@ if __name__ == "__main__":
     #download('wordnet')
 
     preprocessor = EmailPreprocessor()
-    preprocessor.process_csv('labeled_emails.csv', 'preprocessed_emails_balanced.csv')
+    df = preprocessor.read_csv(Config.input_csv_path)
+    df = preprocessor.preprocess_dataframe(df, subject_col='Subject', body_col='Body')
+    df_balanced = preprocessor.underSample(df, label_col='Label')
+    preprocessor.save_csv(df_balanced, Config.target_csv_path)
