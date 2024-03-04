@@ -10,13 +10,13 @@ warnings.filterwarnings("ignore")
 
 logging.set_verbosity_error()
 
-Config.BERT_PATH = 'distilBert_finetuned'
+Config.BERT_PATH = 'bert_finetuned'
 
 tokenizer = BertTokenizer.from_pretrained(Config.BERT_PATH)
 
 id2label = {0 :'Rejected', 1 :'Applied', 2 :'Irrelevant', 3: 'Accepted'}
 
-data = {"Body": ["Hi all, Assignment 2 is out. The deadline is March 23rd. Good luck!TAs"], "ENCODE_CAT": [1]}
+data = {"Body": ["Hey Vivekanand Reddy, My name is Marchem Pfeiffer and I'm the student outreach & engagement coordinator for the AI Futures program."], "ENCODE_CAT": [1]}
 df = pd.DataFrame(data)
 preprocess = EmailPreprocessor()
 df = preprocess.preprocess_dataframe(df)
@@ -28,6 +28,7 @@ train_params = {'batch_size': Config.TRAIN_BATCH_SIZE, 'shuffle': True, 'num_wor
 training_loader = DataLoader(training_set, **train_params)
 
 model = BERTClassifier().to(Config.device)
+model.eval()
 
 for _ in range(0,10):
     for _, data in enumerate(training_loader, 0):

@@ -1,9 +1,7 @@
 import pandas as pd
 import torch
-import transformers
 from torch.utils.data import Dataset, DataLoader
-from transformers import BertModel, BertTokenizer, BertConfig, DataCollatorWithPadding, AutoModelForSequenceClassification
-from accelerate import Accelerator
+from transformers import BertModel, BertTokenizer, BertConfig, DataCollatorWithPadding
 from torch import cuda
 import warnings
 warnings.filterwarnings('ignore')
@@ -12,11 +10,11 @@ class Config:
     MAX_LEN = 512
     TRAIN_BATCH_SIZE = 4
     VALID_BATCH_SIZE = 4
-    EPOCHS = 1
+    EPOCHS = 10
     LEARNING_RATE = 1e-5
     BERT_PATH = 'bert-base-cased'
     FILE_PATH = 'preprocessed_emails_overSampled.csv'
-    MODEL_FOLDER = "bert_large_finetuned"
+    MODEL_FOLDER = "bert_finetuned"
     MODEL_PATH = 'bert_finetuned/pytorch_model.bin'
     VOCAB_PATH = 'bert_finetuned/vocab.txt'
     device = 'cuda:5' if cuda.is_available() else 'cpu'
@@ -24,7 +22,7 @@ class Config:
 class EmailDatasetPreprocessor:
     def __init__(self, file_path):
         self.file_path = file_path
-        self.encode_dict = {'Rejected': 0, 'Applied': 1, 'Irrelevant': 2, 'Accepted': 3}
+        self.encode_dict = {'Rejected': 0, 'Applied': 1, 'Irrelevant': 2}
         
     def encode_cat(self, x):
         if x not in self.encode_dict.keys():
@@ -77,8 +75,8 @@ class BERTClassifier(torch.nn.Module):
         super(BERTClassifier, self).__init__()
         self.l1 = BertModel.from_pretrained(Config.BERT_PATH)
         self.pre_classifier = torch.nn.Linear(768, 768)
-        self.dropout = torch.nn.Dropout(0.3)
-        self.classifier = torch.nn.Linear(768, 4)
+        self.dropout = torch.nn.Dropout(0.1)
+        self.classifier = torch.nn.Linear(768, 3)
 
     def forward(self, input_ids, attention_mask, token_type_ids):
         output_1 = self.l1(input_ids=input_ids, attention_mask=attention_mask, token_type_ids = token_type_ids, return_dict=False)
@@ -151,8 +149,8 @@ class Trainer:
         config = BertConfig.from_pretrained(Config.BERT_PATH)
         config.num_labels=4
         config.architectures = "BertForForSequenceClassification"
-        config.label2id = {'Rejected': 0, 'Applied': 1, 'Irrelevant': 2, 'Accepted': 3}
-        config.id2label = {0 :'Rejected', 1 :'Applied', 2 :'Irrelevant', 3: 'Accepted'}
+        config.label2id = {'Rejected': 0, 'Applied': 1, 'Irrelevant': 2}
+        config.id2label = {0 :'Rejected', 1 :'Applied', 2 :'Irrelevant'}
         config.save_pretrained(Config.MODEL_FOLDER)
         model.eval()
         torch.save({
