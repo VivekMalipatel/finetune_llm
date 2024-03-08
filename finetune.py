@@ -76,7 +76,7 @@ class BERTClassifier(torch.nn.Module):
         self.l1 = BertModel.from_pretrained(Config.BERT_PATH)
         self.pre_classifier = torch.nn.Linear(768, 768)
         self.dropout = torch.nn.Dropout(0.1)
-        self.classifier = torch.nn.Linear(768, 3)
+        self.classifier = torch.nn.Linear(768, 4)
 
     def forward(self, input_ids, attention_mask, token_type_ids):
         output_1 = self.l1(input_ids=input_ids, attention_mask=attention_mask, token_type_ids = token_type_ids, return_dict=False)
@@ -149,8 +149,8 @@ class Trainer:
         config = BertConfig.from_pretrained(Config.BERT_PATH)
         config.num_labels=4
         config.architectures = "BertForForSequenceClassification"
-        config.label2id = {'Rejected': 0, 'Applied': 1, 'Irrelevant': 2}
-        config.id2label = {0 :'Rejected', 1 :'Applied', 2 :'Irrelevant'}
+        config.label2id = {'Rejected': 0, 'Applied': 1, 'Irrelevant': 2, 'Accepted' :3}
+        config.id2label = {0 :'Rejected', 1 :'Applied', 2 :'Irrelevant', 3 : 'Accepted'}
         config.save_pretrained(Config.MODEL_FOLDER)
         model.eval()
         torch.save({
